@@ -1,0 +1,19 @@
+{
+  "name": "wallpaper-shuffler",
+  "version": "2.0.0",
+  "description": "Desktop wallpaper management app with built-in rotation controls for KDE Plasma",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "vite": "vite",
+    "build": "vite build",
+    "dev": "concurrently -k \"npm run vite\" \"wait-on http://localhost:8844 && cross-env VITE_DEV_SERVER_URL=http://localhost:8844 electron .\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "cross-env": "^7.0.3",
+    "electron": "^35.0.0",
+    "vite": "^6.0.0",
+    "wait-on": "^8.0.0"
+  }
+}
