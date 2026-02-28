@@ -465,6 +465,41 @@ function getRotationTarget() {
   return state.config.rotationMode === "sequential" ? getSequentialTarget(1) : getShuffleTarget();
 }
 
+function updateActiveWallpaperArtifacts(sourcePath, leftPath, rightPath, appliedAt, reason) {
+  const leftUrl = pathToFileURL(leftPath).href;
+
+  state.currentSourcePath = sourcePath;
+  state.currentWallpaperUri = leftUrl;
+  state.currentGeneratedFiles = [leftPath, rightPath];
+
+  writeActiveState({
+    sourcePath,
+    outputFiles: [leftPath, rightPath],
+    currentWallpaperUri: leftUrl,
+    appliedAt,
+    reason,
+  });
+  cleanupGeneratedFiles([leftPath, rightPath]);
+
+  return leftUrl;
+}
+
+function applyWallpaperToDesktop(sourcePath, appliedAt, reason) {
+  const { leftPath, rightPath } = splitWallpaper(sourcePath);
+  const leftUrl = pathToFileURL(leftPath).href;
+  const rightUrl = pathToFileURL(rightPath).href;
+
+  runBinary("qdbus", [
+    "org.kde.plasmashell",
+    "/PlasmaShell",
+    "org.kde.PlasmaShell.evaluateScript",
+    buildDesktopScript(leftUrl, rightUrl),
+  ]);
+
+  updateActiveWallpaperArtifacts(sourcePath, leftPath, rightPath, appliedAt, reason);
+  return leftUrl;
+}
+
 async function applyWallpaperFromPath(sourcePath, reason = "manual") {
   if (state.isApplying) {
     throw new Error("Wallpaper update already in progress");
@@ -487,35 +522,13 @@ async function applyWallpaperFromPath(sourcePath, reason = "manual") {
   state.lastError = null;
 
   try {
-    const { leftPath, rightPath } = splitWallpaper(resolvedPath);
-    const leftUrl = pathToFileURL(leftPath).href;
-    const rightUrl = pathToFileURL(rightPath).href;
-
-    runBinary("qdbus", [
-      "org.kde.plasmashell",
-      "/PlasmaShell",
-      "org.kde.PlasmaShell.evaluateScript",
-      buildDesktopScript(leftUrl, rightUrl),
-    ]);
-
-    state.currentSourcePath = resolvedPath;
-    state.currentWallpaperUri = leftUrl;
-    state.currentGeneratedFiles = [leftPath, rightPath];
     state.lastAppliedAt = Date.now();
+    applyWallpaperToDesktop(resolvedPath, state.lastAppliedAt, reason);
     markRecent(resolvedPath);
 
     state.config.lastAppliedPath = resolvedPath;
     state.config.lastAppliedAt = state.lastAppliedAt;
     persistConfig();
-
-    writeActiveState({
-      sourcePath: resolvedPath,
-      outputFiles: [leftPath, rightPath],
-      currentWallpaperUri: leftUrl,
-      appliedAt: state.lastAppliedAt,
-      reason,
-    });
-    cleanupGeneratedFiles([leftPath, rightPath]);
 
     return buildAppState();
   } catch (error) {
@@ -539,6 +552,23 @@ async function cycleWallpaper(direction) {
 async function applyRotationSelection() {
   const target = getRotationTarget();
   return applyWallpaperFromPath(target.path, "auto-rotate");
+}
+
+function shouldRestoreWallpaperAtStartup() {
+  return Boolean(
+    state.dependencyStatus?.ready &&
+      state.currentSourcePath &&
+      fs.existsSync(state.currentSourcePath)
+  );
+}
+
+function restoreCurrentWallpaperAtStartup() {
+  if (!shouldRestoreWallpaperAtStartup()) {
+    return;
+  }
+
+  const restoredAt = state.lastAppliedAt || state.config.lastAppliedAt || Date.now();
+  applyWallpaperToDesktop(state.currentSourcePath, restoredAt, "startup-restore");
 }
 
 function stopRotationTimer() {
@@ -568,16 +598,23 @@ function syncRotationTimer(forceFullInterval = false) {
   state.nextRunAt = Date.now() + delayMs;
 
   state.timer = setTimeout(async () => {
+    let rescheduled = false;
+
     if (!state.isApplying) {
       try {
         await applyRotationSelection();
+        syncRotationTimer(true);
+        rescheduled = true;
       } catch (error) {
         state.lastError = error.message;
       } finally {
         broadcastStateUpdate();
       }
     }
-    syncRotationTimer(true);
+
+    if (!rescheduled) {
+      syncRotationTimer(true);
+    }
   }, delayMs);
 }
 
@@ -814,6 +851,7 @@ async function bootstrap() {
   state.dependencyStatus = collectDependencyStatus();
   readActiveState();
   refreshLibrary();
+  let wallpaperAppliedDuringBootstrap = false;
 
   if (!state.currentSourcePath && state.config.lastAppliedPath && fs.existsSync(state.config.lastAppliedPath)) {
     state.currentSourcePath = state.config.lastAppliedPath;
@@ -835,6 +873,7 @@ async function bootstrap() {
           : getShuffleTarget();
 
         await applyWallpaperFromPath(target.path, "auto-rotate (catch-up)");
+        wallpaperAppliedDuringBootstrap = true;
 
         state.lastAppliedAt = correctedTime;
         state.config.lastAppliedAt = correctedTime;
@@ -846,6 +885,14 @@ async function bootstrap() {
       } catch (e) {
         state.lastError = e.message;
       }
+    }
+  }
+
+  if (!wallpaperAppliedDuringBootstrap) {
+    try {
+      restoreCurrentWallpaperAtStartup();
+    } catch (error) {
+      state.lastError = state.lastError || error.message;
     }
   }
 
@@ -900,33 +947,41 @@ ipcMain.handle("choose-wallpaper-dir", async () => {
 });
 
 ipcMain.handle("update-settings", async (_event, updates) => {
+  const rawUpdates = isObject(updates) ? updates : {};
+  const shouldResetRotationDelay =
+    (Object.prototype.hasOwnProperty.call(rawUpdates, "intervalMinutes") &&
+      Number.parseInt(rawUpdates.intervalMinutes, 10) !== state.config.intervalMinutes) ||
+    (Object.prototype.hasOwnProperty.call(rawUpdates, "autoRotate") &&
+      Boolean(rawUpdates.autoRotate) &&
+      !state.config.autoRotate);
+
   state.config = normalizeConfig({
     ...state.config,
-    ...(isObject(updates) ? updates : {}),
+    ...rawUpdates,
   });
   persistConfig();
   refreshLibrary();
-  syncRotationTimer();
+  syncRotationTimer(shouldResetRotationDelay);
   return buildAppState();
 });
 
 ipcMain.handle("apply-wallpaper", async (_event, sourcePath) => {
-  const result = await applyWallpaperFromPath(sourcePath);
+  await applyWallpaperFromPath(sourcePath);
   syncRotationTimer(true);
-  return result;
+  return buildAppState();
 });
 
 ipcMain.handle("shuffle-wallpaper", async () => {
-  const result = await applyRandomWallpaper();
+  await applyRandomWallpaper();
   syncRotationTimer(true);
-  return result;
+  return buildAppState();
 });
 
 ipcMain.handle("cycle-wallpaper", async (_event, direction) => {
   const parsedDirection = Number(direction) < 0 ? -1 : 1;
-  const result = await cycleWallpaper(parsedDirection);
+  await cycleWallpaper(parsedDirection);
   syncRotationTimer(true);
-  return result;
+  return buildAppState();
 });
 
 ipcMain.handle("window-action", async (event, action) => {
