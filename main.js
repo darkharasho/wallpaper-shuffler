@@ -1,8 +1,11 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, net } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const { createHash } = require("crypto");
 const { execFileSync, spawnSync } = require("child_process");
 const { pathToFileURL } = require("url");
+
+app.commandLine.appendSwitch("enable-smooth-scrolling");
 
 let autoUpdater = null;
 try {
@@ -18,6 +21,7 @@ protocol.registerSchemesAsPrivileged([
 const CONFIG_DIR = path.join(process.env.HOME || app.getPath("home"), ".config", "wallpaper-shuffler");
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 const CACHE_DIR = path.join(process.env.HOME || app.getPath("home"), ".cache", "wallpaper-shuffler");
+const THUMBNAIL_DIR = path.join(CACHE_DIR, "thumbnails");
 const ACTIVE_STATE_PATH = path.join(CACHE_DIR, "active-state.json");
 const DEFAULT_WALLPAPER_DIR = path.join(
   process.env.HOME || app.getPath("home"),
@@ -65,6 +69,9 @@ const updaterState = {
   updateDownloaded: false,
 };
 
+const pendingThumbnailJobs = new Map();
+let thumbnailWorkerActive = false;
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -95,6 +102,7 @@ function runBinary(binary, args) {
 function ensureDirs() {
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.mkdirSync(CACHE_DIR, { recursive: true });
+  fs.mkdirSync(THUMBNAIL_DIR, { recursive: true });
 }
 
 function loadJsonFile(filePath, fallback) {
@@ -186,6 +194,106 @@ function isImageFile(filePath) {
   return IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
 
+function getThumbnailPath(sourcePath, modifiedAt) {
+  const digest = createHash("sha1")
+    .update(`${sourcePath}|${Math.floor(modifiedAt)}`)
+    .digest("hex");
+  return path.join(THUMBNAIL_DIR, `${digest}.jpg`);
+}
+
+function applyGeneratedThumbnail(sourcePath, modifiedAt, thumbnailPath) {
+  const previewUrl = `img://${thumbnailPath}`;
+  let changed = false;
+
+  state.library = state.library.map((item) => {
+    if (item.path !== sourcePath || item.modifiedAt !== modifiedAt || item.previewUrl === previewUrl) {
+      return item;
+    }
+
+    changed = true;
+    return {
+      ...item,
+      previewUrl,
+    };
+  });
+
+  if (changed) {
+    broadcastStateUpdate();
+  }
+}
+
+function processThumbnailQueue() {
+  if (thumbnailWorkerActive) {
+    return;
+  }
+
+  thumbnailWorkerActive = true;
+
+  const runNext = () => {
+    const nextEntry = pendingThumbnailJobs.entries().next().value;
+    if (!nextEntry) {
+      thumbnailWorkerActive = false;
+      return;
+    }
+
+    const [jobKey, job] = nextEntry;
+    pendingThumbnailJobs.delete(jobKey);
+
+    try {
+      if (!fs.existsSync(job.thumbnailPath) && fs.existsSync(job.sourcePath)) {
+        runBinary("magick", [
+          job.sourcePath,
+          "-auto-orient",
+          "-thumbnail",
+          "512x288",
+          "-strip",
+          "-quality",
+          "82",
+          job.thumbnailPath,
+        ]);
+      }
+
+      if (fs.existsSync(job.thumbnailPath)) {
+        applyGeneratedThumbnail(job.sourcePath, job.modifiedAt, job.thumbnailPath);
+      }
+    } catch {
+      // Ignore thumbnail failures and continue.
+    }
+
+    setTimeout(runNext, 0);
+  };
+
+  setTimeout(runNext, 0);
+}
+
+function queueThumbnailGeneration(filePath, modifiedAt, thumbnailPath) {
+  if (!state.dependencyStatus?.magickAvailable || fs.existsSync(thumbnailPath)) {
+    return;
+  }
+
+  const jobKey = `${thumbnailPath}`;
+  if (pendingThumbnailJobs.has(jobKey)) {
+    return;
+  }
+
+  pendingThumbnailJobs.set(jobKey, {
+    sourcePath: filePath,
+    modifiedAt,
+    thumbnailPath,
+  });
+  processThumbnailQueue();
+}
+
+function getPreviewUrl(filePath, modifiedAt) {
+  const thumbnailPath = getThumbnailPath(filePath, modifiedAt);
+  if (state.dependencyStatus?.magickAvailable && fs.existsSync(thumbnailPath)) {
+    return `img://${thumbnailPath}`;
+  }
+
+  queueThumbnailGeneration(filePath, modifiedAt, thumbnailPath);
+  return `img://${filePath}`;
+}
+
 function sortLibrary(items) {
   const sorted = [...items];
 
@@ -234,7 +342,7 @@ function refreshLibrary() {
       path: filePath,
       size: stats.size,
       modifiedAt: stats.mtimeMs,
-      previewUrl: `img://${filePath}`,
+      previewUrl: getPreviewUrl(filePath, stats.mtimeMs),
     });
   }
 

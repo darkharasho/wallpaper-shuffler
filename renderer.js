@@ -342,9 +342,13 @@ function renderGrid() {
     button.type = "button";
     button.dataset.path = item.path;
 
-    const thumb = document.createElement("span");
+    const thumb = document.createElement("img");
     thumb.className = "wallpaper-thumb";
-    thumb.style.backgroundImage = `url("${item.previewUrl}")`;
+    thumb.src = item.previewUrl;
+    thumb.alt = "";
+    thumb.loading = "lazy";
+    thumb.decoding = "async";
+    thumb.draggable = false;
 
     const info = document.createElement("span");
     info.className = "wallpaper-info";

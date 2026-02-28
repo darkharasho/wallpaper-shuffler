@@ -71,10 +71,10 @@ body {
   gap: 16px;
   min-height: 48px;
   padding: 0 12px 0 16px;
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.9);
   border-bottom: 1px solid var(--surface-border);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .titlebar-drag {
@@ -313,6 +313,7 @@ select {
   padding: 24px clamp(16px, 2.8vw, 40px);
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* Hero Section */
@@ -482,6 +483,13 @@ select {
 
 .panel-heading {
   margin-bottom: 16px;
+}
+
+.control-panel,
+.content-panel,
+.toolbar,
+.panel {
+  contain: layout paint;
 }
 
 /* Current Preview */
@@ -780,6 +788,7 @@ select {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 16px;
+  contain: layout paint;
 }
 
 .wallpaper-card {
@@ -791,6 +800,9 @@ select {
   padding: 0;
   transition: all 0.15s ease;
   position: relative;
+  content-visibility: auto;
+  contain: layout paint style;
+  contain-intrinsic-size: 220px 190px;
 }
 
 .wallpaper-card:hover {
@@ -806,9 +818,13 @@ select {
 
 .wallpaper-thumb {
   display: block;
+  width: 100%;
   aspect-ratio: 16/9;
-  background-size: cover;
-  background-position: center;
+  object-fit: cover;
+  object-position: center;
+  background: var(--surface-strong);
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .wallpaper-info {
