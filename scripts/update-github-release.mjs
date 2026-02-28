@@ -116,7 +116,7 @@ if (releaseResp.status === 200) {
   const patchResp = await requestJson("PATCH", `${baseUrl}/releases/${releaseData.id}`, token, {
     name: tagName,
     body: releaseNotes,
-    draft: true,
+    draft: Boolean(releaseData.draft),
     prerelease: false
   });
   if (!patchResp.ok || !patchResp.data?.id) {
@@ -170,6 +170,7 @@ for (const file of files) {
 
 const publishResp = await requestJson("PATCH", `${baseUrl}/releases/${releaseData.id}`, token, {
   draft: false,
+  make_latest: "true",
   body: releaseNotes
 });
 
