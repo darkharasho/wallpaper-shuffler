@@ -34,10 +34,13 @@ const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 const outputDir = path.join(rootDir, packageJson?.build?.directories?.output || "dist_out");
 
 const requestedAll = process.argv.includes("--all");
+const requestedTargets = process.argv.filter((arg) => ["--linux", "--win", "--mac"].includes(arg));
 const platformTargets = [];
 
 if (requestedAll) {
   platformTargets.push("--linux", "--win");
+} else if (requestedTargets.length > 0) {
+  platformTargets.push(...requestedTargets);
 } else if (process.platform === "win32") {
   platformTargets.push("--win");
 } else if (process.platform === "darwin") {

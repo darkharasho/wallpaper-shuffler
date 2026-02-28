@@ -9,8 +9,8 @@
     "build": "vite build",
     "dev": "concurrently -k \"npm run vite\" \"wait-on http://localhost:8844 && cross-env VITE_DEV_SERVER_URL=http://localhost:8844 electron .\"",
     "dev:update": "concurrently -k \"npm run vite\" \"wait-on http://localhost:8844 && cross-env VITE_DEV_SERVER_URL=http://localhost:8844 WALLPAPER_SHUFFLER_FAKE_UPDATES=1 electron .\"",
-    "build:linux": "npm run build && electron-builder --linux",
-    "build:win": "npm run build && electron-builder --win",
+    "build:linux": "npm run build && node scripts/run-electron-builder.mjs --linux",
+    "build:win": "npm run build && node scripts/run-electron-builder.mjs --win",
     "build:github": "node scripts/build-github.mjs"
   },
   "devDependencies": {
@@ -18,9 +18,11 @@
     "cross-env": "^7.0.3",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
-    "electron-updater": "^6.7.3",
     "vite": "^6.0.0",
     "wait-on": "^8.0.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.7.3"
   },
   "build": {
     "appId": "com.wallpapershuffler.app",
