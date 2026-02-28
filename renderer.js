@@ -23,6 +23,8 @@ const elements = {
   searchInput: document.getElementById("search-input"),
   grid: document.getElementById("grid"),
   status: document.getElementById("status"),
+  titlebarVersion: document.getElementById("titlebar-version"),
+  updatePill: document.getElementById("update-pill"),
 };
 
 const state = {
@@ -30,6 +32,15 @@ const state = {
   filterText: "",
   busy: false,
   statusTimer: null,
+  updater: {
+    isSupported: false,
+    disabledReason: "dev",
+    status: "",
+    error: null,
+    progress: null,
+    updateAvailable: false,
+    updateDownloaded: false,
+  },
 };
 
 function escapeHtml(value) {
@@ -97,6 +108,14 @@ function showStatus(message, type = "info") {
   state.statusTimer = setTimeout(() => {
     elements.status.className = "status hidden";
   }, 4200);
+}
+
+function setUpdaterState(patch) {
+  state.updater = {
+    ...state.updater,
+    ...patch,
+  };
+  renderUpdatePanel();
 }
 
 function setBusy(isBusy, label) {
@@ -233,6 +252,71 @@ function renderControls() {
   elements.folderPath.textContent = appState.config.wallpaperDir;
 }
 
+function getDisabledReasonText(reason) {
+  if (reason === "portable") {
+    return "Auto-updates are disabled for portable builds.";
+  }
+
+  if (reason === "missing-dependency") {
+    return "Run npm install so electron-updater is available locally.";
+  }
+
+  if (reason === "missing-config") {
+    return "This build is missing updater metadata.";
+  }
+
+  return "Install a packaged build to check GitHub releases.";
+}
+
+function renderUpdatePanel() {
+  const updater = state.updater;
+  const progressPercent = Math.max(0, Math.min(100, Math.round(Number(updater.progress?.percent || 0))));
+  elements.updatePill.className = "window-pill";
+
+  if (!updater.isSupported) {
+    elements.updatePill.textContent = "Updates unavailable";
+    elements.updatePill.title = getDisabledReasonText(updater.disabledReason);
+    elements.updatePill.disabled = true;
+    return;
+  }
+
+  elements.updatePill.disabled = false;
+
+  if (updater.updateDownloaded) {
+    elements.updatePill.textContent = "Restart to update";
+    elements.updatePill.title = "Restart and install the downloaded update";
+    elements.updatePill.classList.add("is-ready");
+    return;
+  }
+
+  if (updater.error) {
+    elements.updatePill.textContent = "Update error";
+    elements.updatePill.title = updater.error;
+    elements.updatePill.classList.add("is-error");
+  } else if (updater.progress) {
+    elements.updatePill.textContent = `${progressPercent}%`;
+    elements.updatePill.title = `${progressPercent}% downloaded`;
+  } else if (updater.status === "App is up to date.") {
+    elements.updatePill.textContent = "Up to date";
+    elements.updatePill.title = "You are already on the latest published release";
+  } else if (updater.status === "Checking for updates...") {
+    elements.updatePill.textContent = "Checking...";
+    elements.updatePill.title = "Checking for updates";
+    elements.updatePill.classList.add("is-checking");
+  } else if (updater.status === "Update available.") {
+    elements.updatePill.textContent = "Downloading...";
+    elements.updatePill.title = "Downloading update";
+  } else {
+    elements.updatePill.textContent = "Check updates";
+    elements.updatePill.title = "Check GitHub releases published by build:github";
+  }
+}
+
+function renderTitlebarMeta() {
+  const version = state.appState?.appVersion || "...";
+  elements.titlebarVersion.textContent = `v${version}`;
+}
+
 function renderGrid() {
   const appState = state.appState;
   if (!appState) {
@@ -278,11 +362,13 @@ function renderGrid() {
 }
 
 function render() {
+  renderTitlebarMeta();
   renderControls();
   renderStats();
   renderDependencyState();
   renderCurrentWallpaper();
   renderGrid();
+  renderUpdatePanel();
 }
 
 async function syncState(loader, successMessage) {
@@ -290,6 +376,12 @@ async function syncState(loader, successMessage) {
     const nextState = await loader();
     if (nextState) {
       state.appState = nextState;
+      if (nextState.updater) {
+        state.updater = {
+          ...state.updater,
+          ...nextState.updater,
+        };
+      }
       render();
       if (successMessage) {
         showStatus(successMessage, "success");
@@ -419,6 +511,17 @@ elements.windowClose.addEventListener("click", async () => {
   await window.api.windowAction("close");
 });
 
+elements.updatePill.addEventListener("click", () => {
+  if (state.updater.updateDownloaded) {
+    window.api.restartToUpdate();
+    return;
+  }
+
+  if (state.updater.isSupported) {
+    window.api.checkForUpdates();
+  }
+});
+
 window.addEventListener("DOMContentLoaded", async () => {
   setBusy(true);
   await syncState(() => window.api.getAppState());
@@ -427,7 +530,87 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (window.api.onStateUpdated) {
     window.api.onStateUpdated((newState) => {
       state.appState = newState;
+      if (newState.updater) {
+        state.updater = {
+          ...state.updater,
+          ...newState.updater,
+        };
+      }
       render();
+    });
+  }
+
+  if (window.api.onUpdateMessage) {
+    window.api.onUpdateMessage((message) => {
+      setUpdaterState({
+        status: message || "Checking for updates...",
+        error: null,
+        progress: null,
+        updateAvailable: false,
+        updateDownloaded: false,
+      });
+    });
+  }
+
+  if (window.api.onUpdateAvailable) {
+    window.api.onUpdateAvailable(() => {
+      setUpdaterState({
+        status: "Update available.",
+        error: null,
+        progress: null,
+        updateAvailable: true,
+        updateDownloaded: false,
+      });
+    });
+  }
+
+  if (window.api.onUpdateNotAvailable) {
+    window.api.onUpdateNotAvailable(() => {
+      setUpdaterState({
+        status: "App is up to date.",
+        error: null,
+        progress: null,
+        updateAvailable: false,
+        updateDownloaded: false,
+      });
+    });
+  }
+
+  if (window.api.onUpdateError) {
+    window.api.onUpdateError((payload) => {
+      const message = payload?.message || "Update check failed";
+      setUpdaterState({
+        status: `Error: ${message}`,
+        error: message,
+        progress: null,
+        updateAvailable: false,
+        updateDownloaded: false,
+      });
+      showStatus(message, "error");
+    });
+  }
+
+  if (window.api.onDownloadProgress) {
+    window.api.onDownloadProgress((progress) => {
+      setUpdaterState({
+        status: "Downloading update...",
+        error: null,
+        progress,
+        updateAvailable: true,
+        updateDownloaded: false,
+      });
+    });
+  }
+
+  if (window.api.onUpdateDownloaded) {
+    window.api.onUpdateDownloaded(() => {
+      setUpdaterState({
+        status: "Update ready to install.",
+        error: null,
+        progress: null,
+        updateAvailable: true,
+        updateDownloaded: true,
+      });
     });
   }
 

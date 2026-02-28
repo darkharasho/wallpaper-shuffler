@@ -7,13 +7,52 @@
     "start": "electron .",
     "vite": "vite",
     "build": "vite build",
-    "dev": "concurrently -k \"npm run vite\" \"wait-on http://localhost:8844 && cross-env VITE_DEV_SERVER_URL=http://localhost:8844 electron .\""
+    "dev": "concurrently -k \"npm run vite\" \"wait-on http://localhost:8844 && cross-env VITE_DEV_SERVER_URL=http://localhost:8844 electron .\"",
+    "build:linux": "npm run build && electron-builder --linux",
+    "build:win": "npm run build && electron-builder --win",
+    "build:github": "node scripts/build-github.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
     "cross-env": "^7.0.3",
     "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-updater": "^6.7.3",
     "vite": "^6.0.0",
     "wait-on": "^8.0.0"
+  },
+  "build": {
+    "appId": "com.wallpapershuffler.app",
+    "productName": "Wallpaper Shuffler",
+    "directories": {
+      "output": "dist_out"
+    },
+    "artifactName": "Wallpaper-Shuffler-${version}-${os}-${arch}.${ext}",
+    "publish": {
+      "provider": "github",
+      "owner": "${env.GITHUB_RELEASE_OWNER}",
+      "repo": "${env.GITHUB_RELEASE_REPO}",
+      "releaseType": "draft"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "dist/**/*",
+      "index.html",
+      "renderer.js",
+      "style.css",
+      "package.json",
+      "README.md"
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
   }
 }

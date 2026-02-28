@@ -17,6 +17,12 @@
         <span class="titlebar-mark" aria-hidden="true"></span>
         <span class="titlebar-title">Wallpaper Shuffler</span>
       </div>
+      <div class="titlebar-meta">
+        <span id="titlebar-version" class="titlebar-version">v...</span>
+        <button id="update-pill" class="window-pill" type="button" aria-live="polite" title="Check for updates">
+          Updates unavailable
+        </button>
+      </div>
     </div>
     <div class="titlebar-actions">
       <button id="window-minimize" class="window-button" type="button" aria-label="Minimize window">
@@ -148,7 +154,7 @@
     </main>
   </div>
 
-  <script src="renderer.js"></script>
+  <script type="module" src="./renderer.js"></script>
 </body>
 
 </html>

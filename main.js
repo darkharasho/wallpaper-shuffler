@@ -4,6 +4,13 @@ const path = require("path");
 const { execFileSync, spawnSync } = require("child_process");
 const { pathToFileURL } = require("url");
 
+let autoUpdater = null;
+try {
+  ({ autoUpdater } = require("electron-updater"));
+} catch {
+  autoUpdater = null;
+}
+
 protocol.registerSchemesAsPrivileged([
   { scheme: 'img', privileges: { bypassCSP: true, supportFetchAPI: true, corsEnabled: true } }
 ]);
@@ -48,8 +55,25 @@ const state = {
   lastError: null,
 };
 
+const updaterState = {
+  isSupported: false,
+  disabledReason: "dev",
+  status: "",
+  error: null,
+  progress: null,
+  updateAvailable: false,
+  updateDownloaded: false,
+};
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function sendToAllWindows(channel, payload) {
+  const windows = BrowserWindow.getAllWindows();
+  for (const currentWindow of windows) {
+    currentWindow.webContents.send(channel, payload);
+  }
 }
 
 function isObject(value) {
@@ -487,6 +511,16 @@ function buildAppState() {
       platform: process.platform,
       desktop: process.env.XDG_CURRENT_DESKTOP || null,
     },
+    appVersion: app.getVersion(),
+    updater: {
+      isSupported: updaterState.isSupported,
+      disabledReason: updaterState.disabledReason,
+      status: updaterState.status,
+      error: updaterState.error,
+      progress: updaterState.progress,
+      updateAvailable: updaterState.updateAvailable,
+      updateDownloaded: updaterState.updateDownloaded,
+    },
   };
 }
 
@@ -520,7 +554,138 @@ function createWindow() {
     window.loadURL(process.env.VITE_DEV_SERVER_URL);
     // window.webContents.openDevTools();
   } else {
-    window.loadFile("index.html");
+    const builtIndexPath = path.join(__dirname, "dist", "index.html");
+    const sourceIndexPath = path.join(__dirname, "index.html");
+    let targetIndexPath = sourceIndexPath;
+
+    if (fs.existsSync(builtIndexPath)) {
+      let canUseBuiltIndex = true;
+
+      try {
+        const builtIndexHtml = fs.readFileSync(builtIndexPath, "utf8");
+        const legacyRendererPath = path.join(__dirname, "dist", "renderer.js");
+        if (builtIndexHtml.includes('src="renderer.js"') && !fs.existsSync(legacyRendererPath)) {
+          canUseBuiltIndex = false;
+        }
+      } catch {
+        canUseBuiltIndex = false;
+      }
+
+      if (canUseBuiltIndex) {
+        targetIndexPath = builtIndexPath;
+      }
+    }
+
+    window.loadFile(targetIndexPath);
+  }
+}
+
+function refreshUpdaterSupportState() {
+  if (!autoUpdater) {
+    updaterState.isSupported = false;
+    updaterState.disabledReason = "missing-dependency";
+    return;
+  }
+
+  const updateConfigPath = path.join(process.resourcesPath, "app-update.yml");
+  const isPortable = Boolean(process.env.PORTABLE_EXECUTABLE);
+  const isSupported = app.isPackaged && !isPortable && fs.existsSync(updateConfigPath);
+
+  updaterState.isSupported = isSupported;
+  if (isSupported) {
+    updaterState.disabledReason = null;
+    return;
+  }
+
+  if (!app.isPackaged) {
+    updaterState.disabledReason = "dev";
+  } else if (isPortable) {
+    updaterState.disabledReason = "portable";
+  } else {
+    updaterState.disabledReason = "missing-config";
+  }
+}
+
+function setupAutoUpdater() {
+  refreshUpdaterSupportState();
+  if (!updaterState.isSupported) {
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("checking-for-update", () => {
+    updaterState.status = "Checking for updates...";
+    updaterState.error = null;
+    updaterState.progress = null;
+    updaterState.updateAvailable = false;
+    updaterState.updateDownloaded = false;
+    sendToAllWindows("update-message", updaterState.status);
+  });
+
+  autoUpdater.on("update-available", (info) => {
+    updaterState.status = "Update available.";
+    updaterState.error = null;
+    updaterState.progress = null;
+    updaterState.updateAvailable = true;
+    updaterState.updateDownloaded = false;
+    sendToAllWindows("update-available", info);
+  });
+
+  autoUpdater.on("update-not-available", (info) => {
+    updaterState.status = "App is up to date.";
+    updaterState.error = null;
+    updaterState.progress = null;
+    updaterState.updateAvailable = false;
+    updaterState.updateDownloaded = false;
+    sendToAllWindows("update-not-available", info);
+  });
+
+  autoUpdater.on("error", (error) => {
+    const payload = { message: error?.message || "Update check failed" };
+    updaterState.status = `Error: ${payload.message}`;
+    updaterState.error = payload.message;
+    updaterState.progress = null;
+    updaterState.updateAvailable = false;
+    updaterState.updateDownloaded = false;
+    sendToAllWindows("update-error", payload);
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    updaterState.status = "Downloading update...";
+    updaterState.progress = progress;
+    updaterState.error = null;
+    updaterState.updateAvailable = true;
+    sendToAllWindows("download-progress", progress);
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    updaterState.status = "Update ready to install.";
+    updaterState.progress = null;
+    updaterState.error = null;
+    updaterState.updateAvailable = true;
+    updaterState.updateDownloaded = true;
+    sendToAllWindows("update-downloaded", info);
+  });
+}
+
+async function checkForUpdates() {
+  refreshUpdaterSupportState();
+  if (!updaterState.isSupported) {
+    return;
+  }
+
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    const payload = { message: error?.message || "Update check failed" };
+    updaterState.status = `Error: ${payload.message}`;
+    updaterState.error = payload.message;
+    updaterState.progress = null;
+    updaterState.updateAvailable = false;
+    updaterState.updateDownloaded = false;
+    sendToAllWindows("update-error", payload);
   }
 }
 
@@ -536,6 +701,7 @@ function registerProtocols() {
 async function bootstrap() {
   registerProtocols();
   ensureDirs();
+  setupAutoUpdater();
   loadConfig();
   state.dependencyStatus = collectDependencyStatus();
   readActiveState();
@@ -577,6 +743,12 @@ async function bootstrap() {
 
   createWindow();
   syncRotationTimer();
+
+  if (updaterState.isSupported) {
+    setTimeout(() => {
+      void checkForUpdates();
+    }, 3000);
+  }
 }
 
 app.whenReady().then(bootstrap);
@@ -674,4 +846,16 @@ ipcMain.handle("window-action", async (event, action) => {
   }
 
   return { ok: true, isMaximized: window.isMaximized() };
+});
+
+ipcMain.on("check-for-updates", () => {
+  void checkForUpdates();
+});
+
+ipcMain.on("restart-to-update", () => {
+  if (!updaterState.isSupported || !updaterState.updateDownloaded) {
+    return;
+  }
+
+  autoUpdater.quitAndInstall();
 });
