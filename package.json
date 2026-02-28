@@ -39,6 +39,7 @@
       "main.js",
       "preload.js",
       "dist/**/*",
+      "public/imgs/logo.png",
       "index.html",
       "renderer.js",
       "style.css",
@@ -46,11 +47,13 @@
       "README.md"
     ],
     "linux": {
+      "icon": "public/imgs/logo.png",
       "target": [
         "AppImage"
       ]
     },
     "win": {
+      "icon": "public/imgs/logo.png",
       "target": [
         "nsis"
       ]

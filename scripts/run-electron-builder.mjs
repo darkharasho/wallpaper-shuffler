@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const rootDir = process.cwd();
+const packageJsonPath = path.join(rootDir, "package.json");
 
 const loadEnvFile = (filePath) => {
   if (!fs.existsSync(filePath)) return;
@@ -29,6 +30,9 @@ const loadEnvFile = (filePath) => {
 
 loadEnvFile(path.join(rootDir, ".env"));
 
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+const outputDir = path.join(rootDir, packageJson?.build?.directories?.output || "dist_out");
+
 const requestedAll = process.argv.includes("--all");
 const platformTargets = [];
 
@@ -40,6 +44,10 @@ if (requestedAll) {
   platformTargets.push("--mac");
 } else {
   platformTargets.push("--linux");
+}
+
+if (fs.existsSync(outputDir)) {
+  fs.rmSync(outputDir, { recursive: true, force: true });
 }
 
 const args = ["electron-builder", ...platformTargets, "--publish", "never"];

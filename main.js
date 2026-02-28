@@ -24,6 +24,7 @@ const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 const CACHE_DIR = path.join(process.env.HOME || app.getPath("home"), ".cache", "wallpaper-shuffler");
 const THUMBNAIL_DIR = path.join(CACHE_DIR, "thumbnails");
 const ACTIVE_STATE_PATH = path.join(CACHE_DIR, "active-state.json");
+const APP_ICON_PATH = path.join(__dirname, "public", "imgs", "logo.png");
 const DEFAULT_WALLPAPER_DIR = path.join(
   process.env.HOME || app.getPath("home"),
   "Pictures",
@@ -763,6 +764,7 @@ function createWindow() {
     height: 920,
     minWidth: 1080,
     minHeight: 760,
+    icon: fs.existsSync(APP_ICON_PATH) ? APP_ICON_PATH : undefined,
     backgroundColor: "#07111a",
     frame: false,
     titleBarStyle: "hidden",
