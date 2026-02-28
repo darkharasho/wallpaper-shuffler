@@ -1,6 +1,6 @@
 {
   "name": "wallpaper-shuffler",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "description": "Desktop wallpaper management app with built-in rotation controls for KDE Plasma",
   "main": "main.js",
   "scripts": {
