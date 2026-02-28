@@ -6,6 +6,7 @@ const { execFileSync, spawnSync } = require("child_process");
 const { pathToFileURL } = require("url");
 
 app.commandLine.appendSwitch("enable-smooth-scrolling");
+const SHOULD_SIMULATE_UPDATES = process.env.WALLPAPER_SHUFFLER_FAKE_UPDATES === "1";
 
 let autoUpdater = null;
 try {
@@ -70,6 +71,7 @@ const updaterState = {
 };
 
 const pendingThumbnailJobs = new Map();
+const fakeUpdateFlowTimers = new Set();
 let thumbnailWorkerActive = false;
 
 function clamp(value, min, max) {
@@ -81,6 +83,84 @@ function sendToAllWindows(channel, payload) {
   for (const currentWindow of windows) {
     currentWindow.webContents.send(channel, payload);
   }
+}
+
+function patchUpdaterState(patch) {
+  Object.assign(updaterState, patch);
+}
+
+function queueFakeUpdateStep(delayMs, callback) {
+  const timer = setTimeout(() => {
+    fakeUpdateFlowTimers.delete(timer);
+    callback();
+  }, delayMs);
+  fakeUpdateFlowTimers.add(timer);
+}
+
+function clearFakeUpdateFlow() {
+  for (const timer of fakeUpdateFlowTimers) {
+    clearTimeout(timer);
+  }
+  fakeUpdateFlowTimers.clear();
+}
+
+function simulateUpdateCheck() {
+  clearFakeUpdateFlow();
+
+  patchUpdaterState({
+    status: "Checking for updates...",
+    error: null,
+    progress: null,
+    updateAvailable: false,
+    updateDownloaded: false,
+  });
+  sendToAllWindows("update-message", updaterState.status);
+
+  queueFakeUpdateStep(900, () => {
+    patchUpdaterState({
+      status: "Update available.",
+      error: null,
+      progress: null,
+      updateAvailable: true,
+      updateDownloaded: false,
+    });
+    sendToAllWindows("update-available", {
+      version: "2.0.1-dev",
+      releaseName: "Simulated Test Build",
+    });
+  });
+
+  [
+    { delayMs: 1600, percent: 18 },
+    { delayMs: 2200, percent: 57 },
+    { delayMs: 2800, percent: 100 },
+  ].forEach(({ delayMs, percent }) => {
+    queueFakeUpdateStep(delayMs, () => {
+      const progress = { percent, bytesPerSecond: 0, transferred: percent, total: 100 };
+      patchUpdaterState({
+        status: "Downloading update...",
+        error: null,
+        progress,
+        updateAvailable: true,
+        updateDownloaded: false,
+      });
+      sendToAllWindows("download-progress", progress);
+    });
+  });
+
+  queueFakeUpdateStep(3400, () => {
+    patchUpdaterState({
+      status: "Update ready to install.",
+      error: null,
+      progress: null,
+      updateAvailable: true,
+      updateDownloaded: true,
+    });
+    sendToAllWindows("update-downloaded", {
+      version: "2.0.1-dev",
+      releaseName: "Simulated Test Build",
+    });
+  });
 }
 
 function isObject(value) {
@@ -726,6 +806,12 @@ function createWindow() {
 }
 
 function refreshUpdaterSupportState() {
+  if (SHOULD_SIMULATE_UPDATES) {
+    updaterState.isSupported = true;
+    updaterState.disabledReason = null;
+    return;
+  }
+
   if (!autoUpdater) {
     updaterState.isSupported = false;
     updaterState.disabledReason = "missing-dependency";
@@ -753,7 +839,7 @@ function refreshUpdaterSupportState() {
 
 function setupAutoUpdater() {
   refreshUpdaterSupportState();
-  if (!updaterState.isSupported) {
+  if (SHOULD_SIMULATE_UPDATES || !updaterState.isSupported) {
     return;
   }
 
@@ -818,6 +904,11 @@ function setupAutoUpdater() {
 async function checkForUpdates() {
   refreshUpdaterSupportState();
   if (!updaterState.isSupported) {
+    return;
+  }
+
+  if (SHOULD_SIMULATE_UPDATES) {
+    simulateUpdateCheck();
     return;
   }
 
@@ -1016,6 +1107,19 @@ ipcMain.on("check-for-updates", () => {
 });
 
 ipcMain.on("restart-to-update", () => {
+  if (SHOULD_SIMULATE_UPDATES) {
+    clearFakeUpdateFlow();
+    patchUpdaterState({
+      status: "Simulated restart complete.",
+      error: null,
+      progress: null,
+      updateAvailable: false,
+      updateDownloaded: false,
+    });
+    sendToAllWindows("update-message", updaterState.status);
+    return;
+  }
+
   if (!updaterState.isSupported || !updaterState.updateDownloaded) {
     return;
   }

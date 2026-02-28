@@ -197,6 +197,7 @@ body {
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
+  -webkit-app-region: no-drag;
 }
 
 .window-pill:hover {
