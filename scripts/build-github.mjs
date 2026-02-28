@@ -29,6 +29,22 @@ const run = (command, commandArgs, options = {}) => {
   }
 };
 
+const runAndCapture = (command, commandArgs, options = {}) => {
+  const result = spawnSync(command, commandArgs, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    ...options,
+  });
+
+  if (result.status !== 0) {
+    const error = new Error(`Command failed: ${command} ${commandArgs.join(" ")}`);
+    error.exitCode = result.status ?? 1;
+    throw error;
+  }
+
+  return (result.stdout || "").trim();
+};
+
 const bumpVersion = (current, type) => {
   const match = current.match(/^(\d+)\.(\d+)\.(\d+)/);
   if (!match) {
@@ -72,6 +88,7 @@ const releaseRepo = readArgValue("--release-repo");
 const packagePath = path.resolve("package.json");
 const packageLockPath = path.resolve("package-lock.json");
 const packageJson = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+const currentBranch = runAndCapture(gitCmd, ["rev-parse", "--abbrev-ref", "HEAD"]);
 
 try {
   if (bumpType) {
@@ -97,7 +114,7 @@ try {
       run(gitCmd, ["add", "package.json"]);
     }
     run(gitCmd, ["commit", "-m", `chore: bump version to ${nextVersion}`]);
-    run(gitCmd, ["push"]);
+    run(gitCmd, ["push", "origin", currentBranch]);
   }
 
   run(npmCmd, ["run", "build"]);
