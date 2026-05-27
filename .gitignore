@@ -6,4 +6,4 @@ build/
 .DS_Store
 .cache/
 .env
-dist_out/
+dist_out/graphify-out/
