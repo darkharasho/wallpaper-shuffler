@@ -785,6 +785,19 @@ function showMainWindow() {
   createWindow();
 }
 
+function maybeShowTrayHint() {
+  if (state.config.hasShownTrayHint || !Notification.isSupported()) {
+    return;
+  }
+  state.config.hasShownTrayHint = true;
+  persistConfig();
+  new Notification({
+    title: "Wallpaper Shuffler",
+    body: "Still running in the tray. Right-click the tray icon to quit.",
+    icon: fs.existsSync(APP_ICON_PATH) ? APP_ICON_PATH : undefined,
+  }).show();
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1380,
@@ -802,6 +815,14 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  window.on("close", (event) => {
+    if (!state.isQuitting) {
+      event.preventDefault();
+      window.hide();
+      maybeShowTrayHint();
+    }
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -1058,8 +1079,13 @@ async function bootstrap() {
 app.whenReady().then(bootstrap);
 
 app.on("window-all-closed", () => {
+  // Do not quit: the tray keeps the app (and rotation timer) alive.
+  // Real exit happens only via the tray "Quit" action (which sets isQuitting).
+});
+
+app.on("before-quit", () => {
+  state.isQuitting = true;
   stopRotationTimer();
-  app.quit();
 });
 
 ipcMain.handle("get-app-state", async () => {
