@@ -1,12 +1,14 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol, net } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, protocol, net, Tray, Menu, Notification } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { createHash } = require("crypto");
 const { execFileSync, spawnSync } = require("child_process");
 const { pathToFileURL } = require("url");
+const autostart = require("./lib/autostart");
 
 app.commandLine.appendSwitch("enable-smooth-scrolling");
 const SHOULD_SIMULATE_UPDATES = process.env.WALLPAPER_SHUFFLER_FAKE_UPDATES === "1";
+const startHidden = process.argv.includes("--hidden");
 
 let autoUpdater = null;
 try {
@@ -41,6 +43,8 @@ const DEFAULT_CONFIG = {
   intervalMinutes: 30,
   rotationMode: "shuffle",
   avoidImmediateRepeats: true,
+  autostart: true,
+  hasShownTrayHint: false,
   sortMode: "name-asc",
   lastAppliedPath: null,
   lastAppliedAt: null,
@@ -59,6 +63,8 @@ const state = {
   recentHistory: [],
   dependencyStatus: null,
   lastError: null,
+  tray: null,
+  isQuitting: false,
 };
 
 const updaterState = {
@@ -212,6 +218,9 @@ function normalizeConfig(rawConfig) {
       typeof raw.avoidImmediateRepeats === "boolean"
         ? raw.avoidImmediateRepeats
         : DEFAULT_CONFIG.avoidImmediateRepeats,
+    autostart:
+      typeof raw.autostart === "boolean" ? raw.autostart : DEFAULT_CONFIG.autostart,
+    hasShownTrayHint: Boolean(raw.hasShownTrayHint),
     sortMode,
     lastAppliedPath:
       typeof raw.lastAppliedPath === "string" && raw.lastAppliedPath.trim() ? path.resolve(raw.lastAppliedPath) : null,
@@ -690,6 +699,7 @@ function syncRotationTimer(forceFullInterval = false) {
         state.lastError = error.message;
       } finally {
         broadcastStateUpdate();
+        rebuildTrayMenu();
       }
     }
 
@@ -758,6 +768,37 @@ function broadcastStateUpdate() {
   }
 }
 
+function getMainWindow() {
+  const windows = BrowserWindow.getAllWindows();
+  return windows.length > 0 ? windows[0] : null;
+}
+
+function showMainWindow() {
+  const existing = getMainWindow();
+  if (existing) {
+    if (existing.isMinimized()) {
+      existing.restore();
+    }
+    existing.show();
+    existing.focus();
+    return;
+  }
+  createWindow();
+}
+
+function maybeShowTrayHint() {
+  if (state.config.hasShownTrayHint || !Notification.isSupported()) {
+    return;
+  }
+  state.config.hasShownTrayHint = true;
+  persistConfig();
+  new Notification({
+    title: "Wallpaper Shuffler",
+    body: "Still running in the tray. Right-click the tray icon to quit.",
+    icon: fs.existsSync(APP_ICON_PATH) ? APP_ICON_PATH : undefined,
+  }).show();
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1380,
@@ -775,6 +816,21 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  window.on("close", (event) => {
+    if (state.isQuitting) {
+      return;
+    }
+    if (state.tray) {
+      event.preventDefault();
+      window.hide();
+      maybeShowTrayHint();
+      return;
+    }
+    // No tray to return to — quit rather than strand a headless process.
+    state.isQuitting = true;
+    app.quit();
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -804,6 +860,93 @@ function createWindow() {
     }
 
     window.loadFile(targetIndexPath);
+  }
+}
+
+async function shuffleFromTray() {
+  if (state.isApplying) {
+    return;
+  }
+  try {
+    await applyRandomWallpaper();
+    syncRotationTimer(true);
+  } catch (error) {
+    state.lastError = error.message;
+  } finally {
+    broadcastStateUpdate();
+    rebuildTrayMenu();
+  }
+}
+
+function toggleRotationFromTray() {
+  state.config.autoRotate = !state.config.autoRotate;
+  persistConfig();
+  syncRotationTimer(state.config.autoRotate);
+  broadcastStateUpdate();
+  rebuildTrayMenu();
+}
+
+function currentExecutablePath() {
+  return process.env.APPIMAGE || app.getPath("exe");
+}
+
+function applyAutostartSetting(enabled) {
+  if (!app.isPackaged) {
+    return;
+  }
+  try {
+    autostart.reconcileAutostart(enabled, {
+      execPath: currentExecutablePath(),
+      iconPath: APP_ICON_PATH,
+      name: "Wallpaper Shuffler",
+    });
+  } catch (error) {
+    state.lastError = error.message;
+  }
+}
+
+function rebuildTrayMenu() {
+  if (!state.tray) {
+    return;
+  }
+  const menu = Menu.buildFromTemplate([
+    { label: "Show Wallpaper Shuffler", click: () => showMainWindow() },
+    { label: "Shuffle now", click: () => { void shuffleFromTray(); } },
+    {
+      label: state.config.autoRotate ? "Pause rotation" : "Resume rotation",
+      click: () => toggleRotationFromTray(),
+    },
+    { type: "separator" },
+    {
+      label: "Start on login",
+      type: "checkbox",
+      checked: Boolean(state.config.autostart),
+      click: (item) => {
+        state.config.autostart = item.checked;
+        applyAutostartSetting(item.checked);
+        persistConfig();
+        broadcastStateUpdate();
+        rebuildTrayMenu();
+      },
+    },
+    { type: "separator" },
+    { label: "Quit", click: () => { state.isQuitting = true; app.quit(); } },
+  ]);
+  state.tray.setContextMenu(menu);
+}
+
+function createTray() {
+  if (state.tray || !fs.existsSync(APP_ICON_PATH)) {
+    return;
+  }
+  try {
+    state.tray = new Tray(APP_ICON_PATH);
+    state.tray.setToolTip("Wallpaper Shuffler");
+    state.tray.on("click", () => showMainWindow());
+    rebuildTrayMenu();
+  } catch (error) {
+    state.tray = null;
+    state.lastError = error.message;
   }
 }
 
@@ -941,6 +1084,7 @@ async function bootstrap() {
   ensureDirs();
   setupAutoUpdater();
   loadConfig();
+  applyAutostartSetting(state.config.autostart);
   state.dependencyStatus = collectDependencyStatus();
   readActiveState();
   refreshLibrary();
@@ -989,7 +1133,10 @@ async function bootstrap() {
     }
   }
 
-  createWindow();
+  createTray();
+  if (!startHidden) {
+    createWindow();
+  }
   syncRotationTimer();
 
   if (updaterState.isSupported) {
@@ -999,11 +1146,26 @@ async function bootstrap() {
   }
 }
 
-app.whenReady().then(bootstrap);
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    showMainWindow();
+  });
+
+  app.whenReady().then(bootstrap);
+}
 
 app.on("window-all-closed", () => {
+  // Do not quit: the tray keeps the app (and rotation timer) alive.
+  // Real exit happens only via the tray "Quit" action (which sets isQuitting).
+});
+
+app.on("before-quit", () => {
+  state.isQuitting = true;
   stopRotationTimer();
-  app.quit();
 });
 
 ipcMain.handle("get-app-state", async () => {
@@ -1048,13 +1210,18 @@ ipcMain.handle("update-settings", async (_event, updates) => {
       Boolean(rawUpdates.autoRotate) &&
       !state.config.autoRotate);
 
+  const previousAutostart = state.config.autostart;
   state.config = normalizeConfig({
     ...state.config,
     ...rawUpdates,
   });
+  if (state.config.autostart !== previousAutostart) {
+    applyAutostartSetting(state.config.autostart);
+  }
   persistConfig();
   refreshLibrary();
   syncRotationTimer(shouldResetRotationDelay);
+  rebuildTrayMenu();
   return buildAppState();
 });
 
