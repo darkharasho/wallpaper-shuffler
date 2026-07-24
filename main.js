@@ -1,12 +1,14 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol, net } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, protocol, net, Tray, Menu, Notification } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { createHash } = require("crypto");
 const { execFileSync, spawnSync } = require("child_process");
 const { pathToFileURL } = require("url");
+const autostart = require("./lib/autostart");
 
 app.commandLine.appendSwitch("enable-smooth-scrolling");
 const SHOULD_SIMULATE_UPDATES = process.env.WALLPAPER_SHUFFLER_FAKE_UPDATES === "1";
+const startHidden = process.argv.includes("--hidden");
 
 let autoUpdater = null;
 try {
@@ -61,6 +63,8 @@ const state = {
   recentHistory: [],
   dependencyStatus: null,
   lastError: null,
+  tray: null,
+  isQuitting: false,
 };
 
 const updaterState = {
@@ -763,6 +767,24 @@ function broadcastStateUpdate() {
   }
 }
 
+function getMainWindow() {
+  const windows = BrowserWindow.getAllWindows();
+  return windows.length > 0 ? windows[0] : null;
+}
+
+function showMainWindow() {
+  const existing = getMainWindow();
+  if (existing) {
+    if (existing.isMinimized()) {
+      existing.restore();
+    }
+    existing.show();
+    existing.focus();
+    return;
+  }
+  createWindow();
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1380,
@@ -809,6 +831,32 @@ function createWindow() {
     }
 
     window.loadFile(targetIndexPath);
+  }
+}
+
+// TEMPORARY STUB: replaced by the full tray menu in Task 5.
+function rebuildTrayMenu() {
+  if (state.tray) {
+    state.tray.setContextMenu(Menu.buildFromTemplate([
+      { label: "Show Wallpaper Shuffler", click: () => showMainWindow() },
+      { type: "separator" },
+      { label: "Quit", click: () => { state.isQuitting = true; app.quit(); } },
+    ]));
+  }
+}
+
+function createTray() {
+  if (state.tray || !fs.existsSync(APP_ICON_PATH)) {
+    return;
+  }
+  try {
+    state.tray = new Tray(APP_ICON_PATH);
+    state.tray.setToolTip("Wallpaper Shuffler");
+    state.tray.on("click", () => showMainWindow());
+    rebuildTrayMenu();
+  } catch (error) {
+    state.tray = null;
+    state.lastError = error.message;
   }
 }
 
@@ -994,7 +1042,10 @@ async function bootstrap() {
     }
   }
 
-  createWindow();
+  createTray();
+  if (!startHidden) {
+    createWindow();
+  }
   syncRotationTimer();
 
   if (updaterState.isSupported) {
