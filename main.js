@@ -891,6 +891,9 @@ function currentExecutablePath() {
 }
 
 function applyAutostartSetting(enabled) {
+  if (!app.isPackaged) {
+    return;
+  }
   try {
     autostart.reconcileAutostart(enabled, {
       execPath: currentExecutablePath(),
