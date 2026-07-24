@@ -8,6 +8,7 @@ const elements = {
   previousButton: document.getElementById("prev-btn"),
   nextButton: document.getElementById("next-btn"),
   autoRotate: document.getElementById("auto-rotate"),
+  startOnLogin: document.getElementById("start-on-login"),
   frequencyRange: document.getElementById("frequency-range"),
   frequencyInput: document.getElementById("frequency-input"),
   frequencyValue: document.getElementById("frequency-value"),
@@ -243,6 +244,7 @@ function renderControls() {
   }
 
   elements.autoRotate.checked = appState.config.autoRotate;
+  elements.startOnLogin.checked = Boolean(appState.config.autostart);
   elements.frequencyRange.value = String(appState.config.intervalMinutes);
   elements.frequencyInput.value = String(appState.config.intervalMinutes);
   elements.frequencyValue.textContent = formatMinutes(appState.config.intervalMinutes);
@@ -441,6 +443,13 @@ elements.nextButton.addEventListener("click", async () => {
 
 elements.autoRotate.addEventListener("change", async (event) => {
   await updateSettings({ autoRotate: event.target.checked }, event.target.checked ? "Auto-rotate enabled." : "Auto-rotate paused.");
+});
+
+elements.startOnLogin.addEventListener("change", async (event) => {
+  await updateSettings(
+    { autostart: event.target.checked },
+    event.target.checked ? "Start on login enabled." : "Start on login disabled."
+  );
 });
 
 function syncFrequencyDisplays(value) {
