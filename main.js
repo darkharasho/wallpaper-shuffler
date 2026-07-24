@@ -1074,6 +1074,7 @@ async function bootstrap() {
   ensureDirs();
   setupAutoUpdater();
   loadConfig();
+  applyAutostartSetting(state.config.autostart);
   state.dependencyStatus = collectDependencyStatus();
   readActiveState();
   refreshLibrary();
@@ -1189,13 +1190,18 @@ ipcMain.handle("update-settings", async (_event, updates) => {
       Boolean(rawUpdates.autoRotate) &&
       !state.config.autoRotate);
 
+  const previousAutostart = state.config.autostart;
   state.config = normalizeConfig({
     ...state.config,
     ...rawUpdates,
   });
+  if (state.config.autostart !== previousAutostart) {
+    applyAutostartSetting(state.config.autostart);
+  }
   persistConfig();
   refreshLibrary();
   syncRotationTimer(shouldResetRotationDelay);
+  rebuildTrayMenu();
   return buildAppState();
 });
 
