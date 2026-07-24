@@ -41,6 +41,8 @@ const DEFAULT_CONFIG = {
   intervalMinutes: 30,
   rotationMode: "shuffle",
   avoidImmediateRepeats: true,
+  autostart: true,
+  hasShownTrayHint: false,
   sortMode: "name-asc",
   lastAppliedPath: null,
   lastAppliedAt: null,
@@ -212,6 +214,9 @@ function normalizeConfig(rawConfig) {
       typeof raw.avoidImmediateRepeats === "boolean"
         ? raw.avoidImmediateRepeats
         : DEFAULT_CONFIG.avoidImmediateRepeats,
+    autostart:
+      typeof raw.autostart === "boolean" ? raw.autostart : DEFAULT_CONFIG.autostart,
+    hasShownTrayHint: Boolean(raw.hasShownTrayHint),
     sortMode,
     lastAppliedPath:
       typeof raw.lastAppliedPath === "string" && raw.lastAppliedPath.trim() ? path.resolve(raw.lastAppliedPath) : null,
