@@ -27,6 +27,7 @@ const CACHE_DIR = path.join(process.env.HOME || app.getPath("home"), ".cache", "
 const THUMBNAIL_DIR = path.join(CACHE_DIR, "thumbnails");
 const ACTIVE_STATE_PATH = path.join(CACHE_DIR, "active-state.json");
 const APP_ICON_PATH = path.join(__dirname, "public", "imgs", "logo.png");
+const STABLE_ICON_PATH = path.join(CONFIG_DIR, "icon.png");
 const DEFAULT_WALLPAPER_DIR = path.join(
   process.env.HOME || app.getPath("home"),
   "Pictures",
@@ -890,6 +891,21 @@ function currentExecutablePath() {
   return process.env.APPIMAGE || app.getPath("exe");
 }
 
+// The bundled APP_ICON_PATH lives inside the AppImage's ephemeral /tmp mount,
+// which is recreated with a new name each launch — unusable in a persistent
+// autostart .desktop entry. Copy it to a stable path and use that instead.
+function ensureStableIcon() {
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    if (fs.existsSync(APP_ICON_PATH)) {
+      fs.copyFileSync(APP_ICON_PATH, STABLE_ICON_PATH);
+    }
+  } catch {
+    // Fall back to the bundled path below if the copy fails.
+  }
+  return fs.existsSync(STABLE_ICON_PATH) ? STABLE_ICON_PATH : APP_ICON_PATH;
+}
+
 function applyAutostartSetting(enabled) {
   if (!app.isPackaged) {
     return;
@@ -897,7 +913,7 @@ function applyAutostartSetting(enabled) {
   try {
     autostart.reconcileAutostart(enabled, {
       execPath: currentExecutablePath(),
-      iconPath: APP_ICON_PATH,
+      iconPath: ensureStableIcon(),
       name: "Wallpaper Shuffler",
     });
   } catch (error) {
