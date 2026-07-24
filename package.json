@@ -11,7 +11,8 @@
     "dev:update": "concurrently -k \"npm run vite\" \"wait-on http://localhost:8844 && cross-env VITE_DEV_SERVER_URL=http://localhost:8844 WALLPAPER_SHUFFLER_FAKE_UPDATES=1 electron .\"",
     "build:linux": "npm run build && node scripts/run-electron-builder.mjs --linux",
     "build:win": "npm run build && node scripts/run-electron-builder.mjs --win",
-    "build:github": "node scripts/build-github.mjs"
+    "build:github": "node scripts/build-github.mjs",
+    "test": "node --test test/"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
