@@ -819,11 +819,18 @@ function createWindow() {
   });
 
   window.on("close", (event) => {
-    if (!state.isQuitting) {
+    if (state.isQuitting) {
+      return;
+    }
+    if (state.tray) {
       event.preventDefault();
       window.hide();
       maybeShowTrayHint();
+      return;
     }
+    // No tray to return to — quit rather than strand a headless process.
+    state.isQuitting = true;
+    app.quit();
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -1136,7 +1143,17 @@ async function bootstrap() {
   }
 }
 
-app.whenReady().then(bootstrap);
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    showMainWindow();
+  });
+
+  app.whenReady().then(bootstrap);
+}
 
 app.on("window-all-closed", () => {
   // Do not quit: the tray keeps the app (and rotation timer) alive.
