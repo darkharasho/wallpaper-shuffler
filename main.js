@@ -699,6 +699,7 @@ function syncRotationTimer(forceFullInterval = false) {
         state.lastError = error.message;
       } finally {
         broadcastStateUpdate();
+        rebuildTrayMenu();
       }
     }
 
@@ -855,15 +856,73 @@ function createWindow() {
   }
 }
 
-// TEMPORARY STUB: replaced by the full tray menu in Task 5.
-function rebuildTrayMenu() {
-  if (state.tray) {
-    state.tray.setContextMenu(Menu.buildFromTemplate([
-      { label: "Show Wallpaper Shuffler", click: () => showMainWindow() },
-      { type: "separator" },
-      { label: "Quit", click: () => { state.isQuitting = true; app.quit(); } },
-    ]));
+async function shuffleFromTray() {
+  if (state.isApplying) {
+    return;
   }
+  try {
+    await applyRandomWallpaper();
+    syncRotationTimer(true);
+  } catch (error) {
+    state.lastError = error.message;
+  } finally {
+    broadcastStateUpdate();
+    rebuildTrayMenu();
+  }
+}
+
+function toggleRotationFromTray() {
+  state.config.autoRotate = !state.config.autoRotate;
+  persistConfig();
+  syncRotationTimer(state.config.autoRotate);
+  broadcastStateUpdate();
+  rebuildTrayMenu();
+}
+
+function currentExecutablePath() {
+  return process.env.APPIMAGE || app.getPath("exe");
+}
+
+function applyAutostartSetting(enabled) {
+  try {
+    autostart.reconcileAutostart(enabled, {
+      execPath: currentExecutablePath(),
+      iconPath: APP_ICON_PATH,
+      name: "Wallpaper Shuffler",
+    });
+  } catch (error) {
+    state.lastError = error.message;
+  }
+}
+
+function rebuildTrayMenu() {
+  if (!state.tray) {
+    return;
+  }
+  const menu = Menu.buildFromTemplate([
+    { label: "Show Wallpaper Shuffler", click: () => showMainWindow() },
+    { label: "Shuffle now", click: () => { void shuffleFromTray(); } },
+    {
+      label: state.config.autoRotate ? "Pause rotation" : "Resume rotation",
+      click: () => toggleRotationFromTray(),
+    },
+    { type: "separator" },
+    {
+      label: "Start on login",
+      type: "checkbox",
+      checked: Boolean(state.config.autostart),
+      click: (item) => {
+        state.config.autostart = item.checked;
+        applyAutostartSetting(item.checked);
+        persistConfig();
+        broadcastStateUpdate();
+        rebuildTrayMenu();
+      },
+    },
+    { type: "separator" },
+    { label: "Quit", click: () => { state.isQuitting = true; app.quit(); } },
+  ]);
+  state.tray.setContextMenu(menu);
 }
 
 function createTray() {
