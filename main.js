@@ -5,6 +5,7 @@ const { createHash } = require("crypto");
 const { execFileSync, spawnSync } = require("child_process");
 const { pathToFileURL } = require("url");
 const autostart = require("./lib/autostart");
+const { resolveQdbus } = require("./lib/qdbus");
 
 app.commandLine.appendSwitch("enable-smooth-scrolling");
 const SHOULD_SIMULATE_UPDATES = process.env.WALLPAPER_SHUFFLER_FAKE_UPDATES === "1";
@@ -268,9 +269,11 @@ function writeActiveState(payload) {
 }
 
 function collectDependencyStatus() {
-  const qdbusAvailable = hasCommand("qdbus");
+  const qdbusBinary = resolveQdbus({ hasCommand, fileExists: (p) => fs.existsSync(p) });
+  const qdbusAvailable = Boolean(qdbusBinary);
   const magickAvailable = hasCommand("magick");
   return {
+    qdbusBinary,
     qdbusAvailable,
     magickAvailable,
     ready: qdbusAvailable && magickAvailable,
@@ -580,7 +583,7 @@ function applyWallpaperToDesktop(sourcePath, appliedAt, reason) {
   const leftUrl = pathToFileURL(leftPath).href;
   const rightUrl = pathToFileURL(rightPath).href;
 
-  runBinary("qdbus", [
+  runBinary(state.dependencyStatus?.qdbusBinary || "qdbus", [
     "org.kde.plasmashell",
     "/PlasmaShell",
     "org.kde.PlasmaShell.evaluateScript",
